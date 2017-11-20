@@ -1,0 +1,7 @@
+*.log
+*.out
+*.gz
+*.aux
+_minted-monte_carlo/
+*.dSYM/
+*.x

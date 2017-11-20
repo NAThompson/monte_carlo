@@ -1,0 +1,249 @@
+\documentclass[landscape]{article}
+\usepackage[margin=0.3in]{geometry}
+\usepackage{tikz}
+\usepackage{tikz-3dplot}
+\usetikzlibrary{matrix,arrows.meta}
+\usepackage{amsmath,amsthm,amssymb}
+\numberwithin{equation}{section}
+\usepackage{hyperref}
+\hypersetup{
+colorlinks=true,
+urlcolor=red
+}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage[sc]{mathpazo}
+\usepackage{fancyhdr} % Headers and footers
+\usepackage{xcolor}
+\usepackage{minted}
+\pagecolor{black}
+\color{white}
+\pagestyle{fancy} % All pages have headers and footers
+\fancyhead{} % Blank out the default header
+%\fancyfoot{} % Blank out the default footer
+
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\pn}{\phantom{-}}
+%\setlength\parindent{0pt}
+
+\newenvironment{theorem}[2][Theorem]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}\hskip \labelsep {\bfseries #2.}]}{\end{trivlist}}
+\newenvironment{lemma}[2][Lemma]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}\hskip \labelsep {\bfseries #2.}]}{\end{trivlist}}
+\newenvironment{exercise}[2][Exercise]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}\hskip \labelsep {\bfseries #2.}]}{\end{trivlist}}
+\newenvironment{reflection}[2][Reflection]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}\hskip \labelsep {\bfseries #2.}]}{\end{trivlist}}
+\newenvironment{proposition}[2][Proposition]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}\hskip \labelsep {\bfseries #2.}]}{\end{trivlist}}
+\newenvironment{corollary}[2][Corollary]{\begin{trivlist}
+\item[\hskip \labelsep {\bfseries #1}\hskip \labelsep {\bfseries #2.}]}{\end{trivlist}}
+
+\begin{document}
+%\renewcommand{\qedsymbol}{\filledbox}
+
+\title{Monte-Carlo Integration in Boost.Math}
+\author{Nick Thompson}
+
+\maketitle
+\section{Background}
+
+Monte-Carlo integration refers to a set of numerical quadrature techniques which employ random numbers to sample an integrand over the integration domain to produce an estimate for the integral.
+Given
+\begin{align*}
+I[f] := \int_{\Omega} f(\mathbf{x}) \mathrm{d}\mathbf{x}
+\end{align*}
+and
+\begin{align*}
+V := \int_{\Omega} \mathrm{d}\mathbf{x}
+\end{align*}
+In the most naive implementation of Monte-Carlo integration, we create a random uniformly distributed sequence $\{ \mathbf{x}_{i}\}_{i=1}^{N} \subset \Omega \setminus \partial \Omega$, and write
+\begin{align*}
+Q_{N}[f] := \frac{V}{N} \sum_{i=1}^{N} f(\mathbf{x}_{i}) =: V\left<f \right>
+\end{align*}
+Demonstration that $\lim_{N\to \infty} Q_{N}[f] = I[f]$ is not trivial, but makes intuitive sense.
+The error can be estimated from
+\begin{align*}
+\sigma_{N}^{2} := \frac{1}{N-1}\sum_{i=1}^{N} (f(\mathbf{x}_{i}) - \left< f \right>)^{2}
+\end{align*}
+and $\mathrm{Var}(Q_{N}) = V^2\sigma_{N}^{2}/N$, at which point
+\begin{align*}
+I[f] = Q_{N}[f] \pm \frac{V\sigma_{N}}{\sqrt{N}}
+\end{align*}
+If the variance is unbounded then the method does not converge; if $\{\sigma_{i}\}_{i=1}^{\infty}$ is a bounded sequence, then it does converge, but the convergence is very slow.
+
+To make Monte-Carlo integration feasible in practice, we need variance reduction techniques and self-avoiding sequences.
+We will attempt to get to these ideas soon enough.
+However, quite a few challenges are present even with writing a decent ``naive'' Monte-Carlo integrator and hence we will start there.
+
+\section{Naive Monte-Carlo Integration Requirements}
+
+A good Monte-Carlo integration routine should
+\begin{itemize}
+\item Allow real-time query of the variance before the result is returned
+\item Allow graceful cancellation with return of the current estimate
+\item Employ multiple threads
+\item Allow flexible definition of the domain (but should we support infinite domains?)
+\item Allow refinement of the result without having to start from the beginning
+\item Allow support for functions $f\colon \mathbb{R}^{n} \to \mathbb{K}^{m}$ for a field $\mathbb{K} = \mathbb{C},\mathbb{R}$. (It is difficult to defining the variance of a function with codomain $\mathbb{K}^{m}$. This requirement may be too hard to fulfill.)
+\item Allow the function to be singular on $\partial \Omega$.
+\end{itemize}
+
+
+\section{Error Analysis}
+
+Something which is often surprising about Monte-Carlo integration is the need for stabilized summation.
+This is because we do not compute $Q_{N}[f]$ (the infinite precision result), but rather 
+\begin{align*}
+\hat{Q}_{N}[\hat{f}] = Q_{N}[f] + E_{N},
+\end{align*}
+where $E_{N}$ is the error of floating point summation and in function evaluation.
+In the worst case, we can only bound 
+\begin{align*}
+|E_{N}| \le V\epsilon \sum_{i=1}^{N} |\hat{f}(\mathbf{x}_{i})|  = V\epsilon \sum_{i=1}^{N} |f(\mathbf{x}_{i})|(1+\epsilon_{i}) \approx N\epsilon V \left< |f|\right>
+\end{align*}
+where we have ignored the error in the function evaluation $\hat{f}(\mathbf{x}_{i}) = f(\mathbf{x}_{i})(1+\epsilon_{i})$ because it leads to a term quadratic in the machine epsilon.
+So this implies that
+\begin{align*}
+\frac{\left| \hat{Q}_{N}  - I_{N} \right|}{V}  \lesssim  \frac{\sigma_{N}}{\sqrt{N}} + N\epsilon \left< |f| \right>
+\end{align*}
+The error of unstabilized summation \emph{diverges} faster than the infinite precision Monte-Carlo algorithm \emph{converges}.
+This shows that simply increasing the number of samples without bound will not produce a better value of the integral in finite precision arithmetic.
+Replacing $\sigma_{N}$ by a bound $\sigma$ gives a function of $N$ that can be minimized explicitly; the minima is
+\begin{align*}
+N_{\mathrm{opt}} \approx \left( \frac{\sigma}{2\epsilon \left< |f|\right>} \right)^{2/3}, \quad E_{\mathrm{opt}} \approx 1.88(\epsilon\left<|f|\right>\sigma^2)^{1/3}
+\end{align*}
+Of course for a generic function $f$ we cannot reason further without making some assumptions about the ratio $\frac{\sigma}{\left<|f|\right>}$.
+But just for a back-of-the-envelope calculation, we assume this ration is $O(1)$ and take $N \approx \epsilon^{-2/3}$.
+The machine epsilon for various floating point types is $\epsilon_{16} = 4.88\times 10^{-4}$, $\epsilon_{32} = 5.96\times 10^{-8}$, $\epsilon_{64} = 1.11\times 10^{-16}$, $\epsilon_{80} = 5.42\times 10^{-20}$, and $\epsilon_{128} = 9.63\times 10^{-35}$.
+This estimate says that \emph{for 16 bit floating point arithmetic, the optimal number of function evaluation for a naive Monte-Carlo integration is 161}.
+After this, the error of floating point arithmetic just adds noise and we go on a random walk, with little connection to the original integral.
+A full list of the optimal number of function evaluations for each bit length is
+\begin{align*}
+N_{16} \approx 160 \quad N_{32} \approx 65,500 \quad N_{64} \approx 4.3\times 10^{10} \quad N_{80} \approx 6.9\times 10^{12} \quad N_{128} \approx 4.7\times 10^{22}
+\end{align*}
+For reference, a call to \texttt{std::pow} takes 30 ns on a 2.4 GHz intel processor, so the optimal number of function calls at 16 bits of precision is reaches in $4 \, \mu$s, and the computation is probably destroyed in $40\, \mu$s.
+The same line of reasoning leads to 2 milliseconds of computation for floating point computation and destruction of the computation at 20 milliseconds.
+For double precision, single threaded reaches the optimal number of function evaluations in roughly 20 minutes and the computation destroyed in roughly 3 hours.
+
+This line of reasoning is for illustrative purposes only, because in fact most high-dimensional functions take much longer to evaluate than 30 ns.
+(However, a concrete example does show that these estimates are reasonable--more on that point later.)
+At the same time, when we integrate these functions we devote more compute resources to them.
+In this case, we see that the compute time for a Monte-Carlo integration should be
+\begin{align*}
+t_{\mathrm{Monte-Carlo} }= \frac{N_{\mathrm{opt}}t_{\mathrm{call}}}{N_{\mathrm{threads}}}
+\end{align*}
+Assume that the function call takes $1 \mu$s, and that we use a Knight's Landing Xeon Phi chip with 72 cores to compute the integral in double precision.
+Then the calculation takes roughly 10 minutes, whereupon further computation is wasted and increases the error.
+Using an Nvidia Volta chip with 5120 CUDA cores, this calculation take 8 seconds.
+Worse yet, the value of the error is roughly $10^{-5}$ (assuming $\sigma \approx 1$), and cannot be improved without increasing precision of the floating point type.
+
+
+However, if we use Kahan summation, the error of floating point summation is bounded by $ (2\epsilon + N\epsilon^2) \sum_{i=1}^{N} |f(\mathbf{x}_i)|$.
+Going back through the preceeding analysis, we find that $N_{\mathrm{opt}}^{\mathrm{stab}} = N_{\mathrm{opt}}^{2}$, and the lowest achievable error is ${\sim}\epsilon^{2/3}$ (vs $\epsilon^{1/3}$ for unstabilized summation).
+For 16 bit floating point arithmetic, we find that even the error term quadratic in $\epsilon$ can be made large on a reasonable timescale, but there is only so much agony that we can put ourselves through to make a working code.
+In double precision, we find that the error can be made as low as $10^{-11}$. Assuming a $1 \mu$s function call and a 72 core Knight's Landing chip, then the optimal number of function evaluations is attained in 700,000 years on 2017 hardware.
+
+For now we note that using Kahan summation for the Monte-Carlo sum fixes an obvious failure mode for a very small amount of overhead (${\sim}4$ns/function evaluation).
+
+An algorithm to compute the average is given in Knuth, The Art of Computer Programming Vol 2, section 4.2.2.
+The algorithm is given below:
+\begin{minted}{cpp}
+double avg = 0;
+size_t k = 1;
+for (auto x : v) {
+	avg += (x - avg)/k;
+	++k;
+}
+\end{minted}
+This algorithm, though preventing overflow, does not obviate the need for Kahan summation. See \texttt{example/float\_not\_destroyed.cpp} to see this in action.
+
+\section{Comparison with Other APIs}
+\subsection{GSL Monte-Carlo Integration}
+
+The \href{https://www.gnu.org/software/gsl/}{GNU Scientific Library} has a \href{https://www.gnu.org/software/gsl/doc/html/montecarlo.html}{Monte-Carlo} integration routine.
+First we note that the user is responsible for significant setup costs.
+This includes deciding on a random number generator and managing its state, defining your function in the form of a \texttt{gsl\_function}.
+
+Instead of telling the integrator what error you are comfortable with, you tell the integrator how many function calls you want, and it returns an error estimate.
+If the error estimate is too high, the entire calculation must be redone.
+Everything must be done in double precision, and the summation is not compensated.
+The domains must be finite and ``square-like'', which will force the problem of domain rescaling to the user. Also, the function is never evaluated at the endpoints, allowing singular functions to be evaluated.
+
+A GSL function that can be passed to it's Monte-Carlo routine must have the following interface
+
+\begin{minted}{c}
+double f(double* x, int dim, void* params);
+\end{minted}
+\texttt{x} must be a vector of length \texttt{dim}.
+\texttt{dim} is redundant because it must match the domain dimension.
+The params seems to allow the user to use a single function to define a class of functions, say, by turning params into a set of polynomial coefficients and making $f$ a polynomial evaluator.
+
+\subsection{Numerical Recipes \texttt{MCintegrate}}
+
+Numerical Recipes describes a naive Monte-Carlo algorithm which again requires the user to input a square box as the domain.
+However, unlike the GSL, you are allowed to add a "support" function, which describes if the function you want to integrate has support at that point.
+There appears to be no numerical advantage of this over simply having the user make sure their function returns zero outside it's support, so I see no reason boost should use it.
+
+An interesting aspect of Numerical Recipes is that they allow you to integrate $n$ functions at once.
+This presumably is to simulate integration of functions $f\colon \mathbb{R}^{k} \to \mathbb{R}^{n}$, but note that each component must be evaluated separately in NR's API; you cannot reuse computations between components of the output to increase efficiency.
+In addition, the output \emph{must} be vector-valued, even if the vector dimension is 1, as the routine returns a standard vector.
+However, there is an advantage, which is that the random numbers generated can be reused between all function calls.
+
+You do not pass an error goal to \texttt{MCintegrate}, but rather a number of function evaluations you are comfortable with.
+However, an improvement over the GSL is that if you are not happy with the error estimate, you can refine the calculation without losing the current estimate by simply requesting the function be evaluated more times.
+
+Unlike the GSL, you cannot choose a random number generator for the integration, but you do get to choose the random seed.
+This is simply a trade between ease of use and flexibility.
+
+A Numerical Recipes function that can be passed to \texttt{MCintegrate} must have the following interface
+\begin{minted}{cpp}
+double f(const std::vector<double> &x);
+\end{minted}
+
+
+\section{Single Threaded Naive Monte-Carlo Integration}
+
+It is not only the summation which leads to error in a Monte-Carlo integration, but naive calculation of variance is numerically unstable.
+A stable, one-pass method of computing variance is given in Knuth and described \href{https://www.johndcook.com/blog/standard_deviation/}{here}.
+The combination of Kahan summation and sophisticated variance estimation makes the code fairly inscrutable, however it can be understood after reading the references.
+The true problem to be solved with a single threaded implementation is cancellation, progress reporting, and restarting.
+
+For progress reporting, we note that compute time $T \propto N_{\mathrm{eval}}$, the number of function evaluations.
+The model is
+\begin{align*}
+E_{\mathrm{current}} \approx \frac{\sigma_{N_{\mathrm{current}}}}{\sqrt{N_{\mathrm{current}}}}
+\quad \mathrm{and} \quad
+E_{\mathrm{goal}} \approx \frac{\sigma_{N_{\mathrm{necessary}}}}{\sqrt{N_{\mathrm{necessary}}}}
+\end{align*}
+We cannot predict the evolution of the variance sequence $\{\sigma_{i}\}$, and we can only hope that at some point it stabilizes to some limit.
+In practice this seems to take quite a long time; on the order of minutes for even simple functions.
+In addition it has no nice properties, like monotonicity.
+However, a progress bar for a long running function is essential even if the estimate is not incredibly accurate.
+For this reason, we make the dubious assumption that $\sigma_{N_{\mathrm{current}}} \approx \sigma_{N_{\mathrm{necessary}}}$ and write
+\begin{align*}
+T_{\mathrm{necessary}} = \left( \frac{E_{\mathrm{current}}}{E_{\mathrm{goal}}} \right)^{2}T_{\mathrm{current}}
+\end{align*}
+and which point
+\begin{align*}
+\mathrm{time\, to\, completion } = \left[\left( \frac{E_{\mathrm{current}}}{E_{\mathrm{goal}}} \right)^{2} -1 \right]T_{\mathrm{current}}
+\end{align*}
+and
+\begin{align*}
+\mathrm{progress} = \frac{T_{\mathrm{current}}}{T_{\mathrm{necessary}}} = \left( \frac{E_{\mathrm{goal}}}{E_{\mathrm{current}}} \right)^{2}
+\end{align*}
+Despite the obvious problems with this progress estimate, I can see no way of improving on it.
+
+\section{Multithreaded Implementation}
+
+The foundation of the multithreaded Monte-Carlo integration is the linearity of variance for uncorrelated random variables
+\begin{align*}
+\mathbf{Var}(\mathbf{x} + \mathbf{y}) = \mathbf{Var}(\mathbf{x}) + \mathbf{Var}(\mathbf{y})
+\end{align*}
+and linearity of taking averages.
+This makes the problem ``embarrassingly parallel'', though I'm embarrassed to say that the parallel version was not easy for me.
+
+
+
+\end{document}
