@@ -58,9 +58,27 @@ void test_constant()
     BOOST_CHECK(mc.calls() > 1000);
 }
 
+template<class Real>
+void test_nan()
+{
+    std::cout << "Testing that a reasonable action is performed by the Monte-Carlo integrator when singularities are hit on type " << boost::typeindex::type_id<Real>().pretty_name() << "\n";
+    auto g = [](std::vector<Real> const & x)->Real
+    {
+      return (Real) 1/ (Real) 0;
+    };
+
+    std::vector<std::pair<Real, Real>> bounds{{0, 1}, {0, 1}};
+    naive_monte_carlo<Real, decltype(g)> mc(g, bounds, (Real) 0.0001);
+
+    auto task = mc.integrate();
+    Real result = task.get();
+    // I think this is reasonable, but should it throw an exception?
+    BOOST_CHECK(std::isnan(result));
+}
 
 BOOST_AUTO_TEST_CASE(naive_monte_carlo_test)
 {
+    test_nan<float>();
     test_pi<float>();
     test_pi<double>();
     test_pi<long double>();

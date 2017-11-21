@@ -82,6 +82,8 @@ public:
 
     std::future<Real> integrate()
     {
+        // Set done to false in case we wish to restart:
+        m_done = false;
         return std::async(std::launch::async,
                           &naive_monte_carlo::m_integrate, this);
     }
@@ -115,8 +117,9 @@ public:
     Real progress() const
     {
         Real r = m_error_goal.load()/this->current_error_estimate();
-        if (r*r >= 1) {
-          return 1;
+        if (r*r >= 1)
+        {
+            return 1;
         }
         return r*r;
     }
@@ -142,26 +145,16 @@ private:
             threads[i] = std::thread(&naive_monte_carlo::m_thread_monte, this, i);
         }
         do {
-            // std::cout << "Current error: "
-            //           << this->current_error_estimate()
-            //           << ", Current average: "
-            //           << m_avg.load()
-            //           << ", current answer (= average*volume):"
-            //           << m_avg.load()*m_volume
-            //           << ", total calls: "
-            //           << m_total_calls.load() << std::endl;
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             Real variance = 0;
             size_t total_calls = 0;
             Real avg = 0;
             for (size_t i = 0; i < m_num_threads; ++i)
             {
-                Real S = m_thread_Ss[i];
                 avg += (m_thread_averages[i] - avg)/(i+1);
                 size_t t_calls = m_thread_calls[i];
                 total_calls += t_calls;
-                Real thread_variance = S/(t_calls-1);
-                variance += thread_variance;
+                variance += m_thread_Ss[i]/(t_calls-1);
             }
             m_avg = avg;
             m_variance = variance;
@@ -178,25 +171,15 @@ private:
         Real avg = 0;
         for (size_t i = 0; i < m_num_threads; ++i)
         {
-            Real S = m_thread_Ss[i];
             avg += (m_thread_averages[i] - avg)/(i+1);
             size_t t_calls = m_thread_calls[i];
             total_calls += t_calls;
-            Real thread_variance = S/(t_calls-1);
-            variance += thread_variance;
+            variance += m_thread_Ss[i]/(t_calls-1);
         }
         m_avg = avg;
         m_variance = variance;
         m_total_calls = total_calls;
 
-        // std::cout << "Final error: "
-        //           << this->current_error_estimate()
-        //           << ", Final average: "
-        //           << m_avg.load()
-        //           << ", Final answer (= average*volume):"
-        //           << m_avg.load()*m_volume
-        //           << ", total calls: "
-        //           << m_total_calls.load() << std::endl;
         return m_avg.load()*m_volume;
     }
 
