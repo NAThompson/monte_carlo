@@ -159,6 +159,10 @@ for (auto x : v) {
 \end{minted}
 This algorithm, though preventing overflow, does not obviate the need for Kahan summation. See \texttt{example/float\_not\_destroyed.cpp} to see this in action.
 
+It is not only the summation which leads to error in a Monte-Carlo integration, but naive calculation of variance is numerically unstable.
+A stable, one-pass method of computing variance is given in Knuth and described \href{https://www.johndcook.com/blog/standard_deviation/}{here}.
+The combination of Kahan summation and sophisticated variance estimation makes the code fairly inscrutable, however it can be understood after reading the references.
+
 \section{Comparison with Other APIs}
 \subsection{GSL Monte-Carlo Integration}
 
@@ -205,10 +209,10 @@ double f(const std::vector<double> &x);
 
 \section{Single Threaded Naive Monte-Carlo Integration}
 
-It is not only the summation which leads to error in a Monte-Carlo integration, but naive calculation of variance is numerically unstable.
-A stable, one-pass method of computing variance is given in Knuth and described \href{https://www.johndcook.com/blog/standard_deviation/}{here}.
-The combination of Kahan summation and sophisticated variance estimation makes the code fairly inscrutable, however it can be understood after reading the references.
+
 The true problem to be solved with a single threaded implementation is cancellation, progress reporting, and restarting.
+
+This is done in the file \texttt{naive\_monte\_carlo\_single\_thread.hpp}.
 
 For progress reporting, we note that compute time $T \propto N_{\mathrm{eval}}$, the number of function evaluations.
 The model is

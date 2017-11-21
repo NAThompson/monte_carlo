@@ -77,7 +77,7 @@ public:
         m_start = std::chrono::system_clock::now();
         m_done = false;
         m_total_calls = m_num_threads;
-        m_variance = 0;
+        m_variance = std::numeric_limits<Real>::max();
     }
 
     std::future<Real> integrate()
@@ -93,7 +93,7 @@ public:
 
     Real current_error_estimate() const
     {
-        return sqrt(m_variance.load()/m_total_calls.load());
+        return m_volume*sqrt(m_variance.load()/m_total_calls.load());
     }
 
     std::chrono::duration<Real> estimated_time_to_completion() const
@@ -157,13 +157,12 @@ private:
             for (size_t i = 0; i < m_num_threads; ++i)
             {
                 Real S = m_thread_Ss[i];
-                avg += m_thread_averages[i];
+                avg += (m_thread_averages[i] - avg)/(i+1);
                 size_t t_calls = m_thread_calls[i];
                 total_calls += t_calls;
                 Real thread_variance = S/(t_calls-1);
                 variance += thread_variance;
             }
-            avg /= m_num_threads;
             m_avg = avg;
             m_variance = variance;
             m_total_calls = total_calls;
@@ -180,13 +179,12 @@ private:
         for (size_t i = 0; i < m_num_threads; ++i)
         {
             Real S = m_thread_Ss[i];
-            avg += m_thread_averages[i];
+            avg += (m_thread_averages[i] - avg)/(i+1);
             size_t t_calls = m_thread_calls[i];
             total_calls += t_calls;
             Real thread_variance = S/(t_calls-1);
             variance += thread_variance;
         }
-        avg /= m_num_threads;
         m_avg = avg;
         m_variance = variance;
         m_total_calls = total_calls;
@@ -232,13 +230,10 @@ private:
                 }
                 Real f = m_f(x);
                 ++k;
-                Real term = (f-M1)/k;
+                Real term = (f - M1)/k;
                 Real y1 = term - compensator;
                 Real M2 = M1 + y1;
                 compensator = (M2 - M1) - y1;
-                // Does the variance need Kahan summation as well?
-                // It's a less important quantity,
-                // but if it starts diverging, then the computation runs forever.
                 S += (f - M1)*(f - M2);
                 M1 = M2;
             }

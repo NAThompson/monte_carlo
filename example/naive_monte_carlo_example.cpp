@@ -8,6 +8,8 @@
 #include <chrono>
 #include <boost/math/quadrature/naive_monte_carlo.hpp>
 
+using std::vector;
+using std::pair;
 using boost::math::quadrature::naive_monte_carlo;
 
 void display_progress(double progress,
@@ -47,8 +49,8 @@ int main()
     {
       return A / (1.0 - cos(x[0])*cos(x[1])*cos(x[2]));
     };
-    std::vector<std::pair<double, double>> bounds{{0, M_PI}, {0, M_PI}, {0, M_PI}};
-    naive_monte_carlo<double, decltype(g)> mc(g, bounds, 0.0001);
+    vector<pair<double, double>> bounds{{0, M_PI}, {0, M_PI}, {0, M_PI}};
+    naive_monte_carlo<double, decltype(g)> mc(g, bounds, 0.0005);
 
     auto task = mc.integrate();
 
@@ -69,7 +71,11 @@ int main()
         //}
     }
     double y = task.get();
-    std::cout << std::setprecision(std::numeric_limits<double>::digits10);
+    display_progress(mc.progress(),
+                     mc.current_error_estimate(),
+                     mc.current_estimate(),
+                     mc.estimated_time_to_completion());
+    std::cout << std::setprecision(std::numeric_limits<double>::digits10) << std::fixed;
     std::cout << "\nFinal value: " << y << std::endl;
     std::cout << "Exact      : " << exact << std::endl;
     std::cout << "Final error estimate: " << mc.current_error_estimate() << std::endl;
@@ -89,7 +95,8 @@ int main()
         std::cout << "What is the new target error? ";
         std::getline(std::cin, line);
         new_error = atof(line.c_str());
-        if (new_error >= mc.current_error_estimate()) {
+        if (new_error >= mc.current_error_estimate())
+        {
            std::cout << "That error bound is already satisfied.\n";
            return 0;
         }
@@ -107,7 +114,11 @@ int main()
                              mc.estimated_time_to_completion());
         }
         double y = task.get();
-        std::cout << std::setprecision(std::numeric_limits<double>::digits10);
+        display_progress(mc.progress(),
+                         mc.current_error_estimate(),
+                         mc.current_estimate(),
+                         mc.estimated_time_to_completion());
+        std::cout << std::setprecision(std::numeric_limits<double>::digits10) << std::fixed;
         std::cout << "\nFinal value: " << y << std::endl;
         std::cout << "Exact      : " << exact << std::endl;
         std::cout << "Final error estimate: " << mc.current_error_estimate() << std::endl;
