@@ -6,6 +6,7 @@
  */
 #ifndef NAIVE_MONTE_CARLO_HPP
 #define NAIVE_MONTE_CARLO_HPP
+#include <algorithm>
 #include <vector>
 #include <atomic>
 #include <future>

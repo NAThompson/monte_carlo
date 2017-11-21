@@ -202,10 +202,19 @@ double f(const std::vector<double> &x);
 \end{minted}
 
 
-\section{Single Threaded Naive Monte-Carlo Integration}
+\section{Multi-Threaded Naive Monte-Carlo Integration}
+
+The foundation of the multithreaded Monte-Carlo integration is the linearity of variance for uncorrelated random variables
+\begin{align*}
+\mathbf{Var}(\mathbf{x} + \mathbf{y}) = \mathbf{Var}(\mathbf{x}) + \mathbf{Var}(\mathbf{y})
+\end{align*}
+and linearity of taking averages.\footnote{I actually do not know if the variables are uncorrelated. I suspect they are unless the RNG has a major problem.}
+This allows us to let each thread compute its own Monte-Carlo estimate and then a master thread can accumulate their individual variances and function call counts.
+Once these are accumulated, then the master thread can test if the error goal is met, and if so set an \texttt{atomic\_flag} which tells all other threads to stop working.
+Once they finish, a final estimate is made, and the computation is stopped.
 
 
-The true problem to be solved with a single threaded implementation is cancellation, progress reporting, and restarting.
+However, the true problem to be solved with a multi-threaded implementation is cancellation, progress reporting, and restarting.
 For progress reporting, we note that compute time $T \propto N_{\mathrm{eval}}$, the number of function evaluations.
 The model is
 \begin{align*}
@@ -231,17 +240,7 @@ and
 \end{align*}
 Despite the obvious problems with this progress estimate, I can see no way of improving on it.
 
-A simple implementation is given in \texttt{naive\_monte\_carlo\_single\_thread.hpp}.
-\section{Multithreaded Implementation}
 
-The foundation of the multithreaded Monte-Carlo integration is the linearity of variance for uncorrelated random variables
-\begin{align*}
-\mathbf{Var}(\mathbf{x} + \mathbf{y}) = \mathbf{Var}(\mathbf{x}) + \mathbf{Var}(\mathbf{y})
-\end{align*}
-and linearity of taking averages.\footnote{I actually do not know if the variables are uncorrelated. I suspect they are unless the RNG has a major problem.}
-This allows us to let each thread compute its own Monte-Carlo estimate and then a master thread can accumulate their individual variances and function call counts.
-Once these are accumulated, then the master thread can test if the error goal is met, and if so set an \texttt{atomic\_flag} which tells all other threads to stop working.
-Once they finish, a final estimate is made, and the computation is stopped.
 
 
 
