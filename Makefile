@@ -13,7 +13,7 @@ float_destruction.x: example/float_not_destroyed.cpp
 	$(CXX) $(CPPFLAGS) -I./include $< -o $@
 
 test.x: test/naive_monte_carlo_tests.cpp
-	$(CXX) $(CPPFLAGS) -fsanitize=thread -I./include $< -o $@
+	$(CXX) $(CPPFLAGS) -fsanitize=address -I./include $< -o $@
 
 clean:
 	rm -f a.out *.aux *.log *.gz *.out *.pdf *.x

@@ -6,9 +6,14 @@
 #include <future>
 #include <string>
 #include <chrono>
-#include <naive_monte_carlo_single_thread.hpp>
+#include <boost/math/quadrature/naive_monte_carlo.hpp>
 
-void display_progress(double progress, double error_estimate, double current_estimate, std::chrono::duration<double> estimated_time_to_completion)
+using boost::math::quadrature::naive_monte_carlo;
+
+void display_progress(double progress,
+                      double error_estimate,
+                      double current_estimate,
+                      std::chrono::duration<double> estimated_time_to_completion)
 {
     int barWidth = 70;
 
@@ -43,18 +48,21 @@ int main()
       return A / (1.0 - cos(x[0])*cos(x[1])*cos(x[2]));
     };
     std::vector<std::pair<double, double>> bounds{{0, M_PI}, {0, M_PI}, {0, M_PI}};
-    naive_monte_carlo_single_thread<double, decltype(g)> mc(g, bounds, 0.0001);
+    naive_monte_carlo<double, decltype(g)> mc(g, bounds, 0.0001);
 
     auto task = mc.integrate();
 
     //int s = 0;
     std::cout << "Hit ctrl-c to cancel.\n";
-    while (task.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+    while (task.wait_for(std::chrono::seconds(1)) != std::future_status::ready)
     {
-        //std::cout << "\rError = " << mc.current_error_estimate() << ", Eta: " << mc.eta().count() << " seconds, progress = " << mc.progress()*100 << "%, current estimate: " << mc.current_estimate() << " calls: " << mc.calls() << std::flush;
-        display_progress(mc.progress(), mc.current_error_estimate(), mc.current_estimate(), mc.estimated_time_to_completion());
+        display_progress(mc.progress(),
+                         mc.current_error_estimate(),
+                         mc.current_estimate(),
+                         mc.estimated_time_to_completion());
         //++s;
-        // TODO: The following shows that cancellation works, but it would be nice to show how it works with a ctrl-c signal handler.
+        // TODO: The following shows that cancellation works,
+        // but it would be nice to show how it works with a ctrl-c signal handler.
         //if (s > 25){
         //  mc.cancel();
         //  std::cout << "\nCancelling because this is too slow!\n";
@@ -81,6 +89,10 @@ int main()
         std::cout << "What is the new target error? ";
         std::getline(std::cin, line);
         new_error = atof(line.c_str());
+        if (new_error >= mc.current_error_estimate()) {
+           std::cout << "That error bound is already satisfied.\n";
+           return 0;
+        }
     }
     if (new_error > 0)
     {
@@ -89,7 +101,10 @@ int main()
         std::cout << "Hit ctrl-c to cancel.\n";
         while (task.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
         {
-            display_progress(mc.progress(), mc.current_error_estimate(), mc.current_estimate(), mc.estimated_time_to_completion());
+            display_progress(mc.progress(),
+                             mc.current_error_estimate(),
+                             mc.current_estimate(),
+                             mc.estimated_time_to_completion());
         }
         double y = task.get();
         std::cout << std::setprecision(std::numeric_limits<double>::digits10);

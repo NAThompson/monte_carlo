@@ -1,8 +1,8 @@
 \documentclass[landscape]{article}
 \usepackage[margin=0.3in]{geometry}
-\usepackage{tikz}
-\usepackage{tikz-3dplot}
-\usetikzlibrary{matrix,arrows.meta}
+%\usepackage{tikz}
+%\usepackage{tikz-3dplot}
+%\usetikzlibrary{matrix,arrows.meta}
 \usepackage{amsmath,amsthm,amssymb}
 \numberwithin{equation}{section}
 \usepackage{hyperref}
@@ -19,7 +19,7 @@ urlcolor=red
 \pagecolor{black}
 \color{white}
 \pagestyle{fancy} % All pages have headers and footers
-\fancyhead{} % Blank out the default header
+%\fancyhead{} % Blank out the default header
 %\fancyfoot{} % Blank out the default footer
 
 \newcommand{\N}{\mathbb{N}}
@@ -242,7 +242,9 @@ The foundation of the multithreaded Monte-Carlo integration is the linearity of 
 \mathbf{Var}(\mathbf{x} + \mathbf{y}) = \mathbf{Var}(\mathbf{x}) + \mathbf{Var}(\mathbf{y})
 \end{align*}
 and linearity of taking averages.
-This makes the problem ``embarrassingly parallel'', though I'm embarrassed to say that the parallel version was not easy for me.
+This allows us to let each thread compute its own Monte-Carlo estimate and then a master thread can accumulate their individual variances and function call counts.
+Once these are accumulated, then the master thread can test if the error goal is met, and if so set an \texttt{atomic\_flag} which tells all other threads to stop working.
+Once they finish, a final estimate is made, and the computation is stopped.
 
 
 

@@ -6,9 +6,12 @@
 #include <future>
 #include <string>
 #include <chrono>
-#include <naive_monte_carlo_single_thread.hpp>
+#include <boost/math/quadrature/naive_monte_carlo.hpp>
 
-void display_progress(double progress, double error_estimate, double current_estimate, std::chrono::duration<double> estimated_time_to_completion)
+void display_progress(double progress,
+                      double error_estimate,
+                      double current_estimate,
+                      std::chrono::duration<double> estimated_time_to_completion)
 {
     int barWidth = 70;
 
@@ -46,7 +49,7 @@ int main()
     };
 
     std::vector<std::pair<float, float>> bounds{{0, 1.0f}, {0, 1.0f}};
-    naive_monte_carlo_single_thread<float, decltype(g)> mc(g, bounds, 0.0001);
+    naive_monte_carlo<float, decltype(g)> mc(g, bounds, 0.0001);
 
     auto task = mc.integrate();
     std::cout << "Hit ctrl-c to cancel.\n";
@@ -55,6 +58,7 @@ int main()
         display_progress(mc.progress(), mc.current_error_estimate(), mc.current_estimate(), mc.estimated_time_to_completion());
     }
     float y = task.get();
+    display_progress(mc.progress(), mc.current_error_estimate(), mc.current_estimate(), mc.estimated_time_to_completion());
     std::cout << std::setprecision(std::numeric_limits<float>::digits10);
     std::cout << "\nFinal value: " << y << std::endl;
     std::cout << "Exact      : " << M_PI << std::endl;
@@ -68,9 +72,16 @@ int main()
     std::cout << "Hit ctrl-c to cancel.\n";
     while (task.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
     {
-        display_progress(mc.progress(), mc.current_error_estimate(), mc.current_estimate(), mc.estimated_time_to_completion());
+        display_progress(mc.progress(),
+                         mc.current_error_estimate(),
+                         mc.current_estimate(),
+                         mc.estimated_time_to_completion());
     }
     y = task.get();
+    display_progress(mc.progress(),
+                     mc.current_error_estimate(),
+                     mc.current_estimate(),
+                     mc.estimated_time_to_completion());
     std::cout << std::setprecision(std::numeric_limits<float>::digits10);
     std::cout << "\nFinal value: " << y << std::endl;
 }

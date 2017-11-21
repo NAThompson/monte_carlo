@@ -5,6 +5,7 @@
  * LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
  */
 #define BOOST_TEST_MODULE naive_monte_carlo_test
+#include <boost/type_index.hpp>
 #include <boost/test/included/unit_test.hpp>
 #include <boost/test/floating_point_comparison.hpp>
 #include <boost/math/quadrature/naive_monte_carlo.hpp>
@@ -14,7 +15,7 @@ using boost::math::quadrature::naive_monte_carlo;
 template<class Real>
 void test_pi()
 {
-
+    std::cout << "Testing pi is calculated correctly using Monte-Carlo on type " << boost::typeindex::type_id<Real>().pretty_name() << "\n";
     auto g = [](std::vector<Real> const & x)->Real
     {
         Real r = x[0]*x[0]+x[1]*x[1];
@@ -26,7 +27,7 @@ void test_pi()
     };
 
     std::vector<std::pair<Real, Real>> bounds{{0, 1}, {0, 1}};
-    naive_monte_carlo<Real, decltype(g)> mc(g, bounds, (Real) 0.0001);
+    naive_monte_carlo<Real, decltype(g)> mc(g, bounds, (Real) 0.0005);
 
     auto task = mc.integrate();
     Real pi_estimated = task.get();
@@ -41,6 +42,7 @@ void test_pi()
 template<class Real>
 void test_constant()
 {
+    std::cout << "Testing constants are integrated correctly using Monte-Carlo on type " << boost::typeindex::type_id<Real>().pretty_name() << "\n";
     auto g = [](std::vector<Real> const & x)->Real
     {
       return 1;

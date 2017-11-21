@@ -9,10 +9,12 @@
 #include <vector>
 #include <atomic>
 #include <future>
+#include <thread>
 #include <initializer_list>
 #include <utility>
 #include <random>
 #include <chrono>
+#include <map>
 
 namespace boost { namespace math { namespace quadrature {
 
@@ -20,7 +22,10 @@ template<class Real, class F>
 class naive_monte_carlo
 {
 public:
-    naive_monte_carlo(const F& f, std::vector<std::pair<Real, Real>> const & bounds, Real error_goal): m_f{f}
+    naive_monte_carlo(const F& f,
+                      std::vector<std::pair<Real, Real>> const & bounds,
+                      Real error_goal,
+                      size_t threads = std::thread::hardware_concurrency()): m_f{f}, m_num_threads{threads}
     {
         size_t n = bounds.size();
         m_lbs.resize(n);
@@ -40,33 +45,55 @@ public:
             m_dxs[i] = bounds[i].second - m_lbs[i];
             m_volume *= m_dxs[i];
         }
+
+        // If we don't do a single function call in the constructor,
+        // we can't do a restart.
+        std::vector<Real> x(m_lbs.size());
+        std::random_device rd;
+        std::mt19937_64 gen(rd());
+        Real inv_denom = (Real) 1/( (Real) gen.max() + (Real) 2);
+
+        if (m_num_threads == 0)
+        {
+            m_num_threads = 1;
+        }
+        Real avg = 0;
+        for (size_t i = 0; i < m_num_threads; ++i)
+        {
+            for (size_t j = 0; j < m_lbs.size(); ++j)
+            {
+                x[j] = m_lbs[j] + (gen()+1)*inv_denom*m_dxs[j];
+            }
+            Real y = m_f(x);
+            m_thread_averages.emplace(i, y);
+            m_thread_calls.emplace(i, 1);
+            m_thread_Ss.emplace(i, 0);
+            avg += y;
+        }
+        avg /= m_num_threads;
+        m_avg = avg;
+
         m_error_goal = error_goal;
         m_start = std::chrono::system_clock::now();
-        std::vector<Real> x(m_lbs.size());
-        for (size_t i = 0; i < x.size(); ++i)
-        {
-            x[i] = m_lbs[i] + 0.5*m_dxs[i];
-        }
-        m_avg = f(x);
-        m_k = 2;
-        m_S = 0;
+        m_done = false;
+        m_total_calls = m_num_threads;
+        m_variance = 0;
     }
 
     std::future<Real> integrate()
     {
-        return std::async(std::launch::async, &naive_monte_carlo::m_integrate, this);
+        return std::async(std::launch::async,
+                          &naive_monte_carlo::m_integrate, this);
     }
 
     void cancel()
     {
-        m_cancel = true;
+        m_done = true;
     }
 
     Real current_error_estimate() const
     {
-        size_t k = (Real) m_k.load();
-        Real sigma = m_S.load()/(k*(k-1));
-        return sqrt(sigma)*m_volume;
+        return sqrt(m_variance.load()/m_total_calls.load());
     }
 
     std::chrono::duration<Real> estimated_time_to_completion() const
@@ -74,6 +101,9 @@ public:
         auto now = std::chrono::system_clock::now();
         std::chrono::duration<Real> elapsed_seconds = now - m_start;
         Real r = this->current_error_estimate()/m_error_goal.load();
+        if (r*r <= 1) {
+            return 0*elapsed_seconds;
+        }
         return (r*r - 1)*elapsed_seconds;
     }
 
@@ -85,6 +115,9 @@ public:
     Real progress() const
     {
         Real r = m_error_goal.load()/this->current_error_estimate();
+        if (r*r >= 1) {
+          return 1;
+        }
         return r*r;
     }
 
@@ -95,7 +128,7 @@ public:
 
     size_t calls() const
     {
-        return m_k.load();
+        return m_total_calls.load();
     }
 
 private:
@@ -103,100 +136,134 @@ private:
     Real m_integrate()
     {
         m_start = std::chrono::system_clock::now();
+        std::vector<std::thread> threads(m_num_threads);
+        for (size_t i = 0; i < threads.size(); ++i)
+        {
+            threads[i] = std::thread(&naive_monte_carlo::m_thread_monte, this, i);
+        }
+        do {
+            // std::cout << "Current error: "
+            //           << this->current_error_estimate()
+            //           << ", Current average: "
+            //           << m_avg.load()
+            //           << ", current answer (= average*volume):"
+            //           << m_avg.load()*m_volume
+            //           << ", total calls: "
+            //           << m_total_calls.load() << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            Real variance = 0;
+            size_t total_calls = 0;
+            Real avg = 0;
+            for (size_t i = 0; i < m_num_threads; ++i)
+            {
+                Real S = m_thread_Ss[i];
+                avg += m_thread_averages[i];
+                size_t t_calls = m_thread_calls[i];
+                total_calls += t_calls;
+                Real thread_variance = S/(t_calls-1);
+                variance += thread_variance;
+            }
+            avg /= m_num_threads;
+            m_avg = avg;
+            m_variance = variance;
+            m_total_calls = total_calls;
+        } while (this->current_error_estimate() > m_error_goal);
+        // Error bound met; signal the threads:
+        m_done = true;
+        // Wait for each one to finish:
+        std::for_each(threads.begin(), threads.end(),
+                      std::mem_fn(&std::thread::join));
+        // Incorporate their work into the final estimate:
+        Real variance = 0;
+        size_t total_calls = 0;
+        Real avg = 0;
+        for (size_t i = 0; i < m_num_threads; ++i)
+        {
+            Real S = m_thread_Ss[i];
+            avg += m_thread_averages[i];
+            size_t t_calls = m_thread_calls[i];
+            total_calls += t_calls;
+            Real thread_variance = S/(t_calls-1);
+            variance += thread_variance;
+        }
+        avg /= m_num_threads;
+        m_avg = avg;
+        m_variance = variance;
+        m_total_calls = total_calls;
+
+        // std::cout << "Final error: "
+        //           << this->current_error_estimate()
+        //           << ", Final average: "
+        //           << m_avg.load()
+        //           << ", Final answer (= average*volume):"
+        //           << m_avg.load()*m_volume
+        //           << ", total calls: "
+        //           << m_total_calls.load() << std::endl;
+        return m_avg.load()*m_volume;
+    }
+
+    void m_thread_monte(size_t thread_index)
+    {
         std::vector<Real> x(m_lbs.size());
         std::random_device rd;
-        // mt19937_64 benchmarks at 9 ns/call.
-        // default_random_engine benchmarks at 7 ns/call, but the period is much lower.
-        // NR recommends a period of at least 2^64.
-        std::mt19937_64 gen(rd());
-        // I thought this was great, but in fact calling 'dis(gen)' is slow!
-        //std::uniform_real_distribution<Real> dis(std::nextafter(0, std::numeric_limits<Real>::max()), 1.0);
-        bool ok = gen.min() == 0 || gen.min() == 1;
-        if (!ok)
-        {
-            throw std::logic_error("Generator does not obey gen.min() = 0 or 1.\n");
-        }
-
+        // Should we do something different if we have no entropy?
+        // Apple LLVM version 9.0.0 (clang-900.0.38) has no entropy,
+        // but rd() returns a reasonable random sequence.
+        // if (rd.entropy() == 0)
+        // {
+        //     std::cout << "OMG! we have no entropy.\n";
+        // }
+        auto seed = rd();
+        std::mt19937_64 gen(seed);
         Real inv_denom = (Real) 1/( (Real) gen.max() + (Real) 2);
-        Real M1 = m_avg.load();
-        Real S = m_S.load();
-        size_t k = m_k.load();
+        Real M1 = m_thread_averages[thread_index];
+        Real S = m_thread_Ss[thread_index];
         Real compensator = 0;
-        while(k < 2048 || this->current_error_estimate() > m_error_goal)
+        size_t k = m_thread_calls[thread_index];
+        while (!m_done)
         {
             int j = 0;
-            while (j++ < 1024)
+            int magic_calls_before_update = 2048;
+            while (j++ < magic_calls_before_update)
             {
                 for (size_t i = 0; i < m_lbs.size(); ++i)
                 {
                     x[i] = m_lbs[i] + (gen()+1)*inv_denom*m_dxs[i];
                 }
                 Real f = m_f(x);
+                ++k;
                 Real term = (f-M1)/k;
                 Real y1 = term - compensator;
                 Real M2 = M1 + y1;
                 compensator = (M2 - M1) - y1;
-                ++k;
+                // Does the variance need Kahan summation as well?
+                // It's a less important quantity,
+                // but if it starts diverging, then the computation runs forever.
                 S += (f - M1)*(f - M2);
                 M1 = M2;
             }
-            // Don't update the error estimate every call;
-            // because atomic writes are expensive
-            m_avg = M1;
-            m_S = S;
-            m_k = k;
-            if (m_cancel)
-            {
-                return m_avg*m_volume;
-            }
-        }
-        return m_avg*m_volume;
-    }
-
-    void thread_monte()
-    {
-        std::vector<Real> x(m_lbs.size());
-        std::random_device rd;
-        std::mt19937_64 gen(rd());
-        Real inv_denom = (Real) 1/( (Real) gen.max() + (Real) 2);
-
-        for (size_t i = 0; i < m_lbs.size(); ++i)
-        {
-            x[i] = m_lbs[i] + (gen()+1)*inv_denom*m_dxs[i];
-        }
-        Real M1 = f(x);
-        Real S = 0;
-        Real compensator = 0;
-        int j = 0;
-        size_t k = 2;
-        while (j++ < 1024)
-        {
-            for (size_t i = 0; i < m_lbs.size(); ++i)
-            {
-                x[i] = m_lbs[i] + (gen()+1)*inv_denom*m_dxs[i];
-            }
-            Real f = m_f(x);
-            Real term = (f-M1)/k;
-            Real y1 = term - compensator;
-            Real M2 = M1 + y1;
-            compensator = (M2 - M1) - y1;
-            ++k;
-            S += (f - M1)*(f - M2);
-            M1 = M2;
+            m_thread_averages[thread_index] = M1;
+            m_thread_Ss[thread_index] = S;
+            m_thread_calls[thread_index] = k;
         }
     }
 
     std::vector<Real> m_lbs;
     std::vector<Real> m_dxs;
-    std::atomic<size_t> m_k;
     Real m_volume;
     std::atomic<Real> m_error_goal;
-    std::atomic<Real> m_S; // See Knuth section 4.2.2 for defition of S
+    size_t m_num_threads;
+    std::atomic<size_t> m_total_calls;
+    // I wanted these to be vectors rather than maps,
+    // but you can't resize a vector of atomics.
+    std::map<size_t, std::atomic<size_t>> m_thread_calls;
+    std::atomic<Real> m_variance;
+    std::map<size_t, std::atomic<Real>> m_thread_Ss;
     std::atomic<Real> m_avg;
-    std::atomic<bool> m_cancel;
+    std::map<size_t, std::atomic<Real>> m_thread_averages;
+    std::atomic<bool> m_done;
     std::chrono::time_point<std::chrono::system_clock> m_start;
     const F& m_f;
-
 };
 }}}
 #endif
