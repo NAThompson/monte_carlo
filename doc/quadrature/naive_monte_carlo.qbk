@@ -1,0 +1,115 @@
+[/
+Copyright (c) 2017 Nick Thompson
+Use, modification and distribution are subject to the
+Boost Software License, Version 1.0. (See accompanying file
+LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
+]
+
+
+[section:naive_monte_carlo Naive Monte Carlo Integration]
+
+[heading Synopsis]
+
+    #include <boost/math/quadrature/naive_monte_carlo.hpp>
+    namespace boost{ namespace math{ namespace quadrature {
+
+    template<class Real, class F>
+    class naive_monte_carlo
+    {
+    public:
+        naive_monte_carlo(const F& f,
+                          std::vector<std::pair<Real, Real>> const & bounds,
+                          Real error_goal,
+                          size_t threads = std::thread::hardware_concurrency());
+
+        std::future<Real> integrate();
+
+        void cancel();
+
+        Real current_error_estimate() const;
+
+        std::chrono::duration<Real> estimated_time_to_completion() const;
+
+        void update_target_error(Real new_target_error);
+
+        Real progress() const;
+
+        Real current_estimate() const;
+
+        size_t calls() const;
+    }}} // namespaces
+
+[heading Description]
+
+The class `naive_monte_carlo` performs Monte-Carlo integration on a function /f/ on a domain [Omega].
+The theoretical background of Monte-Carlo integration is nicely discussed in [@https://en.wikipedia.org/??????? Wikipedia],
+and as such will not be discussed here.
+
+Given /N/ calls to /f/, the routine computes
+
+\u222B[sub Omega] f(x) dx = V/N[Sigma][sub i=1][super n-1] f(x[sub i]) \pm V[sigma]/sqrt(N)
+
+Despite being "naive", it is a mistake to assume this method is not powerful.
+The lack of complication affords a robustness not easily provided by more sophisticated tools.
+The multithreaded nature of the routine allows us to compute a large number of sample points with great speed,
+and hence the slow convergence is mitigated by exploiting the full power of modern hardware.
+
+A naive Monte-Carlo integration is a bridge to the programming techniques needed to cope with high-performance computing.
+For instance, since the convergence is only 1/sqrt(N),
+the compute time is very sensitive to the error goal.
+Users can easily specify an error goal which causes computation to last months-or just a few seconds.
+Without progress reporting, this situation is disorienting and as such is untenable.
+Even with progress reporting, a user might need to cancel a job due to shifting priorities of the employing institution,
+and as such cancellation must be supported.
+A cancelled job which returns no results is wasted, so the cancellation must be graceful,
+returning the best estimate of the result thus far.
+A task might finish, and the user may well decide to try for a lower error bound.
+Hence restarting without loss of the preceding computation is must be supported.
+Finally, on an HPC system, we generally wish to use all available threads.
+But if the computation is performed on a users workstation,
+then employing every thread will cause the users browser, email, or music apps to become unresponsive,
+so leaving a single thread available for other apps is appreciated.
+
+We begin with an example:
+
+
+    auto g = [&](std::vector<double> const & x)
+    {
+      double A = 1.0 / (M_PI * M_PI * M_PI);
+      return A / (1.0 - cos(x[0])*cos(x[1])*cos(x[2]));
+    };
+    vector<pair<double, double>> bounds{{0, M_PI}, {0, M_PI}, {0, M_PI}};
+    naive_monte_carlo<double, decltype(g)> mc(g, bounds, 0.001);
+
+    auto task = mc.integrate();
+    while (task.wait_for(std::chrono::seconds(1)) != std::future_status::ready)
+    {
+        // The user must decide on a reasonable way to display the progress
+        display_progress(mc.progress(),
+                         mc.current_error_estimate(),
+                         mc.current_estimate(),
+                         mc.estimated_time_to_completion());
+        if (s++ > 25){
+          mc.cancel();
+          std::cout << "\nCancelling because this is too slow!\n";
+        }
+    }
+    double y = task.get();
+    display_progress(mc.progress(),
+                     mc.current_error_estimate(),
+                     mc.current_estimate(),
+                     mc.estimated_time_to_completion());
+
+
+
+
+References:
+
+Trefethen, Lloyd N., Weideman, J.A.C., ['The Exponentially Convergent Trapezoidal Rule], SIAM Review, Vol. 56, No. 3, 2014.
+
+Stoer, Josef, and Roland Bulirsch. ['Introduction to numerical analysis. Vol. 12.], Springer Science & Business Media, 2013.
+
+Higham, Nicholas J. ['Accuracy and stability of numerical algorithms.] Society for industrial and applied mathematics, 2002.
+
+
+[endsect]
