@@ -5,3 +5,4 @@
 _minted-monte_carlo/
 *.dSYM/
 *.x
+.DS_Store

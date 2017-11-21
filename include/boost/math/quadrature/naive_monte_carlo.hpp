@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <vector>
 #include <atomic>
+#include <functional>
 #include <future>
 #include <thread>
 #include <initializer_list>
