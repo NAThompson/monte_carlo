@@ -159,6 +159,11 @@ private:
             m_avg = avg;
             m_variance = variance;
             m_total_calls = total_calls;
+            // Allow cancellation:
+            if (m_done)
+            {
+                break;
+            }
         } while (this->current_error_estimate() > m_error_goal);
         // Error bound met; signal the threads:
         m_done = true;
@@ -199,6 +204,7 @@ private:
         Real inv_denom = (Real) 1/( (Real) gen.max() + (Real) 2);
         Real M1 = m_thread_averages[thread_index];
         Real S = m_thread_Ss[thread_index];
+        // Kahan summation is required. See the implementation discussion.
         Real compensator = 0;
         size_t k = m_thread_calls[thread_index];
         while (!m_done)

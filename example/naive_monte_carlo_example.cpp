@@ -61,7 +61,7 @@ int main()
 
     auto task = mc.integrate();
 
-    //int s = 0;
+    int s = 0;
     std::cout << "Hit ctrl-c to cancel.\n";
     while (task.wait_for(std::chrono::seconds(1)) != std::future_status::ready)
     {
@@ -69,13 +69,12 @@ int main()
                          mc.current_error_estimate(),
                          mc.current_estimate(),
                          mc.estimated_time_to_completion());
-        //++s;
         // TODO: The following shows that cancellation works,
         // but it would be nice to show how it works with a ctrl-c signal handler.
-        //if (s > 25){
-        //  mc.cancel();
-        //  std::cout << "\nCancelling because this is too slow!\n";
-        //}
+        if (s++ > 25){
+          mc.cancel();
+          std::cout << "\nCancelling because this is too slow!\n";
+        }
     }
     double y = task.get();
     display_progress(mc.progress(),
@@ -113,7 +112,7 @@ int main()
         mc.update_target_error(new_error);
         auto task = mc.integrate();
         std::cout << "Hit ctrl-c to cancel.\n";
-        while (task.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+        while (task.wait_for(std::chrono::seconds(1)) != std::future_status::ready)
         {
             display_progress(mc.progress(),
                              mc.current_error_estimate(),
