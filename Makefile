@@ -1,7 +1,7 @@
 CXX := g++
 CPPFLAGS := -g --std=c++14 -O3 -march=native -Wfatal-errors
 
-all: benchmarks example float_destruction
+all: benchmarks.x examples.x float_destruction.x test.x
 
 benchmarks.x: benchmarks/naive_monte.cpp
 	$(CXX) $(CPPFLAGS) -I./include $< -o $@ -lgsl -lgslcblas -lbenchmark -pthread

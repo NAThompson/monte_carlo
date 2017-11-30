@@ -29,13 +29,14 @@ public:
                       Real error_goal,
                       size_t threads = std::thread::hardware_concurrency()): m_f{f}, m_num_threads{threads}
     {
+        using std::isfinite;
         size_t n = bounds.size();
         m_lbs.resize(n);
         m_dxs.resize(n);
         m_volume = 1;
         for (size_t i = 0; i < n; ++i)
         {
-            if (!(std::isfinite(bounds[i].first) && std::isfinite(bounds[i].second)))
+            if (!(isfinite(bounds[i].first) && isfinite(bounds[i].second)))
             {
                 throw std::domain_error("The routine only support bounded domains. Rescaling infinite domains must be done by the user.\n");
             }
@@ -95,8 +96,14 @@ public:
         m_done = true;
     }
 
+    Real variance() const
+    {
+        return m_variance.load();
+    }
+
     Real current_error_estimate() const
     {
+        using std::sqrt;
         return m_volume*sqrt(m_variance.load()/m_total_calls.load());
     }
 
@@ -148,18 +155,22 @@ private:
         }
         do {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            Real variance = 0;
             size_t total_calls = 0;
+            for (size_t i = 0; i < m_num_threads; ++i)
+            {
+                total_calls += m_thread_calls[i];
+            }
+            Real variance = 0;
             Real avg = 0;
             for (size_t i = 0; i < m_num_threads; ++i)
             {
-                avg += (m_thread_averages[i] - avg)/(i+1);
                 size_t t_calls = m_thread_calls[i];
-                total_calls += t_calls;
-                variance += m_thread_Ss[i]/(t_calls-1);
+                // Will this overflow? Not hard to remove . . .
+                avg += m_thread_averages[i]*( (Real) t_calls/ (Real) total_calls);
+                variance += m_thread_Ss[i];
             }
             m_avg = avg;
-            m_variance = variance;
+            m_variance = variance/(total_calls - 1);
             m_total_calls = total_calls;
             // Allow cancellation:
             if (m_done)
@@ -172,19 +183,27 @@ private:
         // Wait for each one to finish:
         std::for_each(threads.begin(), threads.end(),
                       std::mem_fn(&std::thread::join));
+        if (m_exception)
+        {
+            std::rethrow_exception(m_exception);
+        }
         // Incorporate their work into the final estimate:
-        Real variance = 0;
         size_t total_calls = 0;
+        for (size_t i = 0; i < m_num_threads; ++i)
+        {
+            total_calls += m_thread_calls[i];
+        }
+        Real variance = 0;
         Real avg = 0;
         for (size_t i = 0; i < m_num_threads; ++i)
         {
-            avg += (m_thread_averages[i] - avg)/(i+1);
             size_t t_calls = m_thread_calls[i];
-            total_calls += t_calls;
-            variance += m_thread_Ss[i]/(t_calls-1);
+            // Will this overflow? Not hard to remove . . .
+            avg += m_thread_averages[i]*( (Real) t_calls/ (Real) total_calls);
+            variance += m_thread_Ss[i];
         }
         m_avg = avg;
-        m_variance = variance;
+        m_variance = variance/(total_calls - 1);
         m_total_calls = total_calls;
 
         return m_avg.load()*m_volume;
@@ -192,53 +211,64 @@ private:
 
     void m_thread_monte(size_t thread_index)
     {
-        std::vector<Real> x(m_lbs.size());
-        std::random_device rd;
-        // Should we do something different if we have no entropy?
-        // Apple LLVM version 9.0.0 (clang-900.0.38) has no entropy,
-        // but rd() returns a reasonable random sequence.
-        // if (rd.entropy() == 0)
-        // {
-        //     std::cout << "OMG! we have no entropy.\n";
-        // }
-        auto seed = rd();
-        std::mt19937_64 gen(seed);
-        Real inv_denom = (Real) 1/( (Real) gen.max() + (Real) 2);
-        Real M1 = m_thread_averages[thread_index];
-        Real S = m_thread_Ss[thread_index];
-        // Kahan summation is required. See the implementation discussion.
-        Real compensator = 0;
-        size_t k = m_thread_calls[thread_index];
-        while (!m_done)
+        try
         {
-            int j = 0;
-            int magic_calls_before_update = 2048;
-            while (j++ < magic_calls_before_update)
+            std::vector<Real> x(m_lbs.size());
+            std::random_device rd;
+            // Should we do something different if we have no entropy?
+            // Apple LLVM version 9.0.0 (clang-900.0.38) has no entropy,
+            // but rd() returns a reasonable random sequence.
+            // if (rd.entropy() == 0)
+            // {
+            //     std::cout << "OMG! we have no entropy.\n";
+            // }
+            auto seed = rd();
+            std::mt19937_64 gen(seed);
+            Real inv_denom = (Real) 1/( (Real) gen.max() + (Real) 2);
+            Real M1 = m_thread_averages[thread_index];
+            Real S = m_thread_Ss[thread_index];
+            // Kahan summation is required. See the implementation discussion.
+            Real compensator = 0;
+            size_t k = m_thread_calls[thread_index];
+            while (!m_done)
             {
-                for (size_t i = 0; i < m_lbs.size(); ++i)
+                int j = 0;
+                int magic_calls_before_update = 2048;
+                while (j++ < magic_calls_before_update)
                 {
-                    x[i] = m_lbs[i] + (gen()+1)*inv_denom*m_dxs[i];
+                    for (size_t i = 0; i < m_lbs.size(); ++i)
+                    {
+                        x[i] = m_lbs[i] + (gen()+1)*inv_denom*m_dxs[i];
+                    }
+                    Real f = m_f(x);
+                    ++k;
+                    Real term = (f - M1)/k;
+                    Real y1 = term - compensator;
+                    Real M2 = M1 + y1;
+                    compensator = (M2 - M1) - y1;
+                    S += (f - M1)*(f - M2);
+                    M1 = M2;
                 }
-                Real f = m_f(x);
-                ++k;
-                Real term = (f - M1)/k;
-                Real y1 = term - compensator;
-                Real M2 = M1 + y1;
-                compensator = (M2 - M1) - y1;
-                S += (f - M1)*(f - M2);
-                M1 = M2;
+                m_thread_averages[thread_index] = M1;
+                m_thread_Ss[thread_index] = S;
+                m_thread_calls[thread_index] = k;
             }
-            m_thread_averages[thread_index] = M1;
-            m_thread_Ss[thread_index] = S;
-            m_thread_calls[thread_index] = k;
+        }
+        catch (...)
+        {
+            // Signal the other threads that the computation is ruined:
+            m_done = true;
+            m_exception = std::current_exception();
         }
     }
 
+    const F& m_f;
+    size_t m_num_threads;
+    std::atomic<Real> m_error_goal;
+    std::atomic<bool> m_done;
     std::vector<Real> m_lbs;
     std::vector<Real> m_dxs;
     Real m_volume;
-    std::atomic<Real> m_error_goal;
-    size_t m_num_threads;
     std::atomic<size_t> m_total_calls;
     // I wanted these to be vectors rather than maps,
     // but you can't resize a vector of atomics.
@@ -247,9 +277,8 @@ private:
     std::map<size_t, std::atomic<Real>> m_thread_Ss;
     std::atomic<Real> m_avg;
     std::map<size_t, std::atomic<Real>> m_thread_averages;
-    std::atomic<bool> m_done;
     std::chrono::time_point<std::chrono::system_clock> m_start;
-    const F& m_f;
+    std::exception_ptr m_exception;
 };
 }}}
 #endif

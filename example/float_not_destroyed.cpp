@@ -8,6 +8,8 @@
 #include <chrono>
 #include <boost/math/quadrature/naive_monte_carlo.hpp>
 
+using boost::math::quadrature::naive_monte_carlo;
+
 void display_progress(double progress,
                       double error_estimate,
                       double current_estimate,
